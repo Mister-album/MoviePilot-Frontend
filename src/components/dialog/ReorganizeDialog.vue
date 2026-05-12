@@ -5,6 +5,7 @@ import { numberValidator } from '@/@validators'
 import api from '@/api'
 import { transferTypeOptions } from '@/api/constants'
 import {
+  ApiResponse,
   FileItem,
   ManualTransferPayload,
   ManualTransferPreviewData,
@@ -17,6 +18,7 @@ import { useBackgroundOptimization } from '@/composables/useBackgroundOptimizati
 import MediaIdSelector from '../misc/MediaIdSelector.vue'
 import ProgressDialog from './ProgressDialog.vue'
 import { useI18n } from 'vue-i18n'
+import { nextTick } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useGlobalSettingsStore } from '@/stores'
 
@@ -442,7 +444,10 @@ function createTransferPayload(options: { item?: FileItem; logid?: number; previ
 }
 
 // 请求整理接口
-async function requestManualTransfer(payload: ManualTransferPayload, background: boolean = false) {
+async function requestManualTransfer(
+  payload: ManualTransferPayload,
+  background: boolean = false,
+): Promise<ApiResponse<ManualTransferPreviewData>> {
   return await api.post(`transfer/manual?background=${background}`, payload)
 }
 
@@ -480,40 +485,6 @@ function mergePreviewData(target: ManualTransferPreviewData, incoming?: ManualTr
   }
 }
 
-// 预览状态颜色
-function getPreviewStatusColor(success?: boolean) {
-  if (success === true) return 'success'
-  if (success === false) return 'error'
-  return 'secondary'
-}
-
-// 格式化季集信息
-function getEpisodeText(item: ManualTransferPreviewItem) {
-  const parts: string[] = []
-  const season = getPreviewSeasonNumber(item)
-  const episode = toPreviewNumber(item.episode)
-  const episodeEnd = toPreviewNumber(item.episode_end)
-
-  if (season !== undefined) {
-    parts.push(`S${String(season).padStart(2, '0')}`)
-  }
-
-  if (episode !== undefined) {
-    const start = `E${String(episode).padStart(2, '0')}`
-    if (episodeEnd !== undefined && episodeEnd !== episode) {
-      parts.push(`${start}-${String(episodeEnd).padStart(2, '0')}`)
-    } else {
-      parts.push(start)
-    }
-  }
-
-  if (item.part) {
-    parts.push(item.part)
-  }
-
-  return parts.join(' / ') || '-'
-}
-
 // 预览整理结果
 async function previewTransfer() {
   if (!props.logids && !props.items) return
@@ -524,29 +495,59 @@ async function previewTransfer() {
   const mergedPreviewData = getDefaultPreviewData()
 
   try {
+    const tasks: Promise<void>[] = []
+
     if (props.items) {
-      for (const item of props.items) {
-        const result: { [key: string]: any } = await requestManualTransfer(
-          createTransferPayload({ item, preview: true }),
-        )
-        if (!result.success) throw new Error(result.message || t('dialog.reorganize.previewRequestFailed'))
-        mergePreviewData(mergedPreviewData, result.data)
-      }
+      tasks.push(
+        ...props.items.map(
+          item =>
+            new Promise<void>(resolve => {
+              requestManualTransfer(createTransferPayload({ item, preview: true }))
+                .then(result => {
+                  if (result.success) {
+                    mergePreviewData(mergedPreviewData, result.data)
+                  } else {
+                    console.warn(`预览失败: ${result.message}`)
+                  }
+                  resolve()
+                })
+                .catch(err => {
+                  console.warn(`预览请求异常: ${err?.message}`)
+                  resolve()
+                })
+            }),
+        ),
+      )
     }
 
     if (props.logids) {
-      for (const logid of props.logids) {
-        const result: { [key: string]: any } = await requestManualTransfer(
-          createTransferPayload({ logid, preview: true }),
-        )
-        if (!result.success) throw new Error(result.message || t('dialog.reorganize.previewRequestFailed'))
-        mergePreviewData(mergedPreviewData, result.data)
-      }
+      tasks.push(
+        ...props.logids.map(
+          logid =>
+            new Promise<void>(resolve => {
+              requestManualTransfer(createTransferPayload({ logid, preview: true }))
+                .then(result => {
+                  if (result.success) {
+                    mergePreviewData(mergedPreviewData, result.data)
+                  } else {
+                    console.warn(`预览失败: ${result.message}`)
+                  }
+                  resolve()
+                })
+                .catch(err => {
+                  console.warn(`预览请求异常: ${err?.message}`)
+                  resolve()
+                })
+            }),
+        ),
+      )
     }
+
+    await Promise.all(tasks)
 
     previewData.value = mergedPreviewData
     previewLoaded.value = true
-    setTimeout(() => updatePreviewPageSize(), 0)
+    nextTick(() => updatePreviewPageSize())
   } catch (error: any) {
     previewRequestError.value = error?.message || t('dialog.reorganize.previewRequestFailed')
     $toast.error(t('dialog.reorganize.previewRequestFailed'))
@@ -560,7 +561,8 @@ function updatePreviewPageSize() {
   const bodyHeight = previewFileBodyRef.value?.clientHeight ?? 0
   if (bodyHeight <= 0) return
 
-  const rowHeight = 46
+  const firstRow = previewFileBodyRef.value?.querySelector('.preview-file-row')
+  const rowHeight = firstRow?.getBoundingClientRect().height ?? 46
   const pageSize = Math.max(1, Math.floor(bodyHeight / rowHeight))
   previewPageSize.value = pageSize
 
@@ -586,10 +588,10 @@ watch(
   () => previewLoaded.value,
   loaded => {
     if (loaded) {
-      setTimeout(() => {
+      nextTick(() => {
         setupPreviewFileBodyObserver()
         updatePreviewPageSize()
-      }, 0)
+      })
     } else {
       previewFileBodyResizeObserver?.disconnect()
     }
