@@ -444,10 +444,10 @@ function createTransferPayload(options: { item?: FileItem; logid?: number; previ
 }
 
 // 请求整理接口
-async function requestManualTransfer(
+async function requestManualTransfer<T = any>(
   payload: ManualTransferPayload,
   background: boolean = false,
-): Promise<ApiResponse<ManualTransferPreviewData>> {
+): Promise<ApiResponse<T>> {
   return await api.post(`transfer/manual?background=${background}`, payload)
 }
 
@@ -485,6 +485,25 @@ function mergePreviewData(target: ManualTransferPreviewData, incoming?: ManualTr
   }
 }
 
+function appendPreviewFailure(target: ManualTransferPreviewData, options: { source?: string; message?: string }) {
+  const message = options.message || t('dialog.reorganize.previewRequestFailed')
+  mergePreviewData(target, {
+    summary: {
+      total: 1,
+      success: 0,
+      failed: 1,
+    },
+    items: [
+      {
+        source: options.source,
+        success: false,
+        message,
+      },
+    ],
+    message,
+  })
+}
+
 // 预览整理结果
 async function previewTransfer() {
   if (!props.logids && !props.items) return
@@ -499,47 +518,47 @@ async function previewTransfer() {
 
     if (props.items) {
       tasks.push(
-        ...props.items.map(
-          item =>
-            new Promise<void>(resolve => {
-              requestManualTransfer(createTransferPayload({ item, preview: true }))
-                .then(result => {
-                  if (result.success) {
-                    mergePreviewData(mergedPreviewData, result.data)
-                  } else {
-                    console.warn(`预览失败: ${result.message}`)
-                  }
-                  resolve()
-                })
-                .catch(err => {
-                  console.warn(`预览请求异常: ${err?.message}`)
-                  resolve()
-                })
-            }),
-        ),
+        ...props.items.map(async item => {
+          try {
+            const result = await requestManualTransfer<ManualTransferPreviewData>(
+              createTransferPayload({ item, preview: true }),
+            )
+            if (result.success) {
+              mergePreviewData(mergedPreviewData, result.data)
+            } else {
+              console.warn(`预览失败: ${result.message}`)
+              appendPreviewFailure(mergedPreviewData, { source: item.path, message: result.message })
+            }
+          } catch (err: any) {
+            console.warn(`预览请求异常: ${err?.message}`)
+            appendPreviewFailure(mergedPreviewData, { source: item.path, message: err?.message })
+          }
+        }),
       )
     }
 
     if (props.logids) {
       tasks.push(
-        ...props.logids.map(
-          logid =>
-            new Promise<void>(resolve => {
-              requestManualTransfer(createTransferPayload({ logid, preview: true }))
-                .then(result => {
-                  if (result.success) {
-                    mergePreviewData(mergedPreviewData, result.data)
-                  } else {
-                    console.warn(`预览失败: ${result.message}`)
-                  }
-                  resolve()
-                })
-                .catch(err => {
-                  console.warn(`预览请求异常: ${err?.message}`)
-                  resolve()
-                })
-            }),
-        ),
+        ...props.logids.map(async logid => {
+          try {
+            const result = await requestManualTransfer<ManualTransferPreviewData>(
+              createTransferPayload({ logid, preview: true }),
+            )
+            if (result.success) {
+              mergePreviewData(mergedPreviewData, result.data)
+            } else {
+              console.warn(`预览失败: ${result.message}`)
+              appendPreviewFailure(mergedPreviewData, {
+                message: `历史记录 ${logid}: ${result.message || t('dialog.reorganize.previewRequestFailed')}`,
+              })
+            }
+          } catch (err: any) {
+            console.warn(`预览请求异常: ${err?.message}`)
+            appendPreviewFailure(mergedPreviewData, {
+              message: `历史记录 ${logid}: ${err?.message || t('dialog.reorganize.previewRequestFailed')}`,
+            })
+          }
+        }),
       )
     }
 
