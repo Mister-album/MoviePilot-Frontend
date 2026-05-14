@@ -180,8 +180,9 @@ const pageRange = [
   { title: '100', value: 100 },
   { title: '500', value: 500 },
   { title: '1000', value: 1000 },
-  { title: 'All', value: -1 },
 ]
+
+const pageRangeValues = pageRange.map(item => item.value)
 
 // 数据列表
 const dataList = ref<TransferHistory[]>([])
@@ -209,7 +210,7 @@ const groupBy = ref<any>([
 ])
 
 // 每页条数
-const itemsPerPage = ref<number>(ensureNumber(route.query.itemsPerPage, 50))
+const itemsPerPage = ref<number>(ensurePageSize(route.query.itemsPerPage, 50))
 
 // 当前页码
 const currentPage = ref<number>(ensureNumber(route.query.currentPage, 1))
@@ -225,6 +226,9 @@ const progressValue = ref(0)
 
 // 是否已刷新
 const isRefreshed = ref(false)
+
+// 是否已完成首次激活
+const hasActivatedOnce = ref(false)
 
 // 删除确认对话框
 const deleteConfirmDialog = ref(false)
@@ -270,7 +274,7 @@ const TransferDict: { [key: string]: string } = {
 // 分页提示
 const pageTip = computed(() => {
   const begin = itemsPerPage.value * (currentPage.value - 1) + 1
-  const end = itemsPerPage.value * currentPage.value === -1 ? 'ALL' : itemsPerPage.value * currentPage.value
+  const end = Math.min(itemsPerPage.value * currentPage.value, totalItems.value)
   return {
     begin,
     end,
@@ -280,7 +284,7 @@ const pageTip = computed(() => {
 // 分页总数
 const totalPage = computed(() => {
   const total = Math.ceil(totalItems.value / itemsPerPage.value)
-  return total
+  return Math.max(1, total)
 })
 
 // 切换页签
@@ -663,6 +667,11 @@ function ensureNumber(value: any, defaultValue: number = 0) {
   return value
 }
 
+function ensurePageSize(value: any, defaultValue: number = 50) {
+  const pageSize = ensureNumber(value, defaultValue)
+  return pageRangeValues.includes(pageSize) ? pageSize : defaultValue
+}
+
 // 按标题分组后的选中数量统计，键为标题，值为对应分组的选中数
 const selectedCountsGroupedByTitle = computed(() => {
   return selected.value.reduce(
@@ -743,6 +752,17 @@ useDynamicButton({
 onMounted(() => {
   loadStorages()
   fetchData()
+})
+
+onActivated(() => {
+  if (!hasActivatedOnce.value) {
+    hasActivatedOnce.value = true
+    return
+  }
+
+  if (!loading.value) {
+    fetchData()
+  }
 })
 
 onUnmounted(() => {
