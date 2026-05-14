@@ -107,6 +107,43 @@ const currentItem = ref<FileItem>()
 // 选中的项目
 const selected = ref<FileItem[]>([])
 
+function getFileItemKey(item?: FileItem) {
+  return [item?.storage ?? inProps.item.storage ?? '', item?.type ?? '', item?.path ?? ''].join('|')
+}
+
+function dedupeFileItems(fileItems: FileItem[]) {
+  const uniqueItems = new Map<string, FileItem>()
+  fileItems.forEach(item => {
+    uniqueItems.set(getFileItemKey(item), item)
+  })
+
+  return Array.from(uniqueItems.values())
+}
+
+function syncSelectedItems(nextItems: FileItem[] = items.value) {
+  if (!selected.value.length) return
+
+  const currentItemMap = new Map(nextItems.map(item => [getFileItemKey(item), item]))
+  selected.value = dedupeFileItems(selected.value)
+    .map(item => currentItemMap.get(getFileItemKey(item)))
+    .filter((item): item is FileItem => !!item)
+}
+
+function isSelected(item: FileItem) {
+  return selected.value.some(selectedItem => getFileItemKey(selectedItem) === getFileItemKey(item))
+}
+
+function setItemSelected(item: FileItem, checked: boolean) {
+  const itemKey = getFileItemKey(item)
+
+  if (checked) {
+    selected.value = dedupeFileItems([...selected.value, item])
+    return
+  }
+
+  selected.value = selected.value.filter(selectedItem => getFileItemKey(selectedItem) !== itemKey)
+}
+
 // 识别结果
 const nameTestResult = ref<Context>()
 
@@ -190,6 +227,7 @@ async function list_files() {
     return;
   }
   items.value = data
+  syncSelectedItems(data)
   emit('loading', false)
   loading.value = false
 
@@ -265,13 +303,7 @@ function changePath(item: FileItem) {
 // 点击列表项
 function listItemClick(item: FileItem) {
   if (selectMode.value) {
-    if (selected.value.includes(item)) {
-      selected.value = selected.value.filter(i => i !== item)
-    } else {
-      selected.value.push(item)
-    }
-    // 去重
-    selected.value = Array.from(new Set(selected.value))
+    setItemSelected(item, !isSelected(item))
     return false
   }
   changePath(item)
@@ -416,7 +448,7 @@ function showTransfer(item: FileItem) {
 
 // 显示批量整理对话框
 function showBatchTransfer() {
-  transferItems.value = selected.value
+  transferItems.value = dedupeFileItems(selected.value)
   transferPopper.value = true
 }
 
@@ -453,6 +485,7 @@ watch(
   async () => {
     // 清空列表
     items.value = []
+    selected.value = []
     // 关闭弹窗
     nameTestResult.value = undefined
     nameTestDialog.value = false
@@ -706,7 +739,11 @@ onUnmounted(() => {
                   <VListItem v-bind="hover.props" class="px-3 pe-1" @click="listItemClick(item)">
                     <template #prepend>
                       <VListItemAction v-if="selectMode">
-                        <VCheckbox v-model="selected" :value="item" />
+                        <VCheckbox
+                          :model-value="isSelected(item)"
+                          @update:model-value="setItemSelected(item, !!$event)"
+                          @click.stop
+                        />
                       </VListItemAction>
                       <template v-else>
                         <VIcon
