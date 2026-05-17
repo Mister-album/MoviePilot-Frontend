@@ -3,9 +3,17 @@ import { useToast } from 'vue-toastification'
 import api from '@/api'
 import ProgressDialog from '@/components/dialog/ProgressDialog.vue'
 import { useI18n } from 'vue-i18n'
+import { useSilentSettingRefresh } from '@/composables/useSilentSettingRefresh'
 
 // 国际化
 const { t } = useI18n()
+
+const props = defineProps({
+  active: {
+    type: Boolean,
+    default: true,
+  },
+})
 
 // 提示框
 const $toast = useToast()
@@ -37,7 +45,7 @@ const siteSetting = ref<any>({
   Site: {
     SITEDATA_REFRESH_INTERVAL: 0,
     SITE_MESSAGE: false,
-    BROWSER_EMULATION: 'playwright',
+    BROWSER_EMULATION: 'cloakbrowser',
     FLARESOLVERR_URL: '',
   },
 })
@@ -65,7 +73,7 @@ const SiteDataRefreshIntervalItems = [
 
 // 站点访问仿真方式
 const BrowserEmulationItems = [
-  { title: 'Playwright', value: 'playwright' },
+  { title: 'CloakBrowser', value: 'cloakbrowser' },
   { title: 'FlareSolverr', value: 'flaresolverr' },
 ]
 
@@ -121,6 +129,10 @@ async function saveSiteSetting(value: { [key: string]: any }) {
 // 加载数据
 onMounted(() => {
   loadSiteSettings()
+})
+
+useSilentSettingRefresh(loadSiteSettings, {
+  active: computed(() => props.active),
 })
 </script>
 

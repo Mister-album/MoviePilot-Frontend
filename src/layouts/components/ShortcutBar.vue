@@ -9,6 +9,7 @@ type MessageViewExpose = {
   pauseSSE?: () => void
   resumeSSE?: () => void
   refreshLatestMessages?: () => Promise<void> | void
+  forceScrollToEnd?: () => void
 }
 
 // 国际化
@@ -67,14 +68,8 @@ const user_message = ref('')
 // 发送按钮是否可用
 const sendButtonDisabled = ref(false)
 
-// 消息对话框引用
-const messageDialogRef = ref<any>(null)
-
 // 消息视图引用
 const messageViewRef = ref<MessageViewExpose | null>(null)
-
-// 滚动容器引用
-const messageContentRef = ref<any>()
 
 // 定义捷径列表
 const shortcuts = [
@@ -148,58 +143,9 @@ function openDialog(dialogRef: any) {
   dialogRef.value = true
 }
 
-// 打开消息弹窗并清除徽章
-async function openMessageDialog() {
+// 打开消息弹窗
+function openMessageDialog() {
   messageDialog.value = true
-  // 延迟清除徽章，确保对话框已经打开
-  setTimeout(async () => {
-    await clearAppBadge()
-  }, 500)
-  // 延迟滚动到底部，确保弹窗完全打开
-  setTimeout(() => {
-    forceScrollToEnd()
-  }, 600)
-  // 等待对话框打开后恢复SSE连接
-  nextTick(() => {
-    messageViewRef.value?.resumeSSE?.()
-  })
-}
-
-// 智能滚动到底部（只有用户在底部附近时才滚动）
-function scrollMessageToEnd() {
-  // 使用更长的延迟确保DOM已更新
-  setTimeout(() => {
-    try {
-      // 查找消息弹窗的滚动容器
-      const cardText = document.querySelector('.v-dialog .v-card-text')
-      if (cardText) {
-        const { scrollTop, scrollHeight, clientHeight } = cardText
-        // 计算距离底部的距离
-        const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-        // 如果用户距离底部小于1/3屏幕高度，认为用户在底部附近，执行自动滚动
-        if (distanceFromBottom <= clientHeight / 3) {
-          cardText.scrollTop = cardText.scrollHeight
-        }
-      }
-    } catch (error) {
-      console.error(error)
-    }
-  }, 500) // 增加延迟时间
-}
-
-// 强制滚动到底部（用于发送消息后）
-function forceScrollToEnd() {
-  setTimeout(() => {
-    try {
-      // 查找消息弹窗的滚动容器
-      const cardText = document.querySelector('.v-dialog .v-card-text')
-      if (cardText) {
-        cardText.scrollTop = cardText.scrollHeight
-      }
-    } catch (error) {
-      console.error(error)
-    }
-  }, 500)
 }
 
 // 拼接全部日志url
@@ -221,7 +167,7 @@ async function sendMessage() {
 
     // 发送成功后主动同步最新一页消息，避免SSE短暂断流时界面停留在旧状态。
     // await messageViewRef.value?.refreshLatestMessages?.()
-    forceScrollToEnd() // 发送消息后强制滚动到底部
+    messageViewRef.value?.forceScrollToEnd?.()
   } catch (error) {
     console.error(error)
   } finally {
@@ -240,8 +186,20 @@ defineExpose({
 })
 
 // 监听消息对话框状态变化
-watch(messageDialog, newValue => {
-  if (!newValue && messageViewRef.value?.pauseSSE) {
+watch(messageDialog, async newValue => {
+  if (newValue) {
+    await nextTick()
+    messageViewRef.value?.resumeSSE?.()
+    messageViewRef.value?.forceScrollToEnd?.()
+
+    window.setTimeout(() => {
+      void clearAppBadge()
+    }, 500)
+
+    return
+  }
+
+  if (messageViewRef.value?.pauseSSE) {
     // 对话框关闭时暂停SSE连接
     messageViewRef.value.pauseSSE()
   }
@@ -475,7 +433,7 @@ onMounted(() => {
     scrollable
     :fullscreen="!display.mdAndUp.value"
   >
-    <VCard>
+    <VCard class="system-health-dialog-card">
       <VCardItem>
         <VCardTitle>
           <VIcon icon="mdi-cog" class="me-2" />
@@ -484,7 +442,7 @@ onMounted(() => {
         <VDialogCloseBtn @click="systemTestDialog = false" />
       </VCardItem>
       <VDivider />
-      <VCardText class="pa-0">
+      <VCardText class="system-health-dialog-body pa-0">
         <ModuleTestView />
       </VCardText>
     </VCard>
@@ -496,7 +454,6 @@ onMounted(() => {
     max-width="50rem"
     scrollable
     :fullscreen="!display.mdAndUp.value"
-    ref="messageDialogRef"
   >
     <VCard>
       <VCardItem>
@@ -507,8 +464,8 @@ onMounted(() => {
         <VDialogCloseBtn @click="messageDialog = false" />
       </VCardItem>
       <VDivider />
-      <VCardText ref="messageContentRef">
-        <MessageView ref="messageViewRef" @scroll="scrollMessageToEnd" />
+      <VCardText>
+        <MessageView ref="messageViewRef" />
       </VCardText>
       <VDivider />
       <VCardActions class="pa-4">
@@ -535,3 +492,24 @@ onMounted(() => {
     </VCard>
   </VDialog>
 </template>
+
+<style scoped>
+.system-health-dialog-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.system-health-dialog-body {
+  /* 弹窗正文本身不滚动，滚动只交给健康检查结果列表。 */
+  display: flex;
+  flex: 1 1 auto;
+  block-size: min(42rem, calc(100dvh - 8rem - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+  min-block-size: 0;
+  overflow: hidden !important;
+}
+
+:global(.v-dialog--fullscreen) .system-health-dialog-body {
+  block-size: auto;
+}
+</style>

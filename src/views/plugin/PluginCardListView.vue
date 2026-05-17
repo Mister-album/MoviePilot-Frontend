@@ -13,6 +13,7 @@ import PluginMixedSortCard from '@/components/cards/PluginMixedSortCard.vue'
 import ProgressiveCardGrid from '@/components/misc/ProgressiveCardGrid.vue'
 import { usePWA } from '@/composables/usePWA'
 import { useDynamicHeaderTab } from '@/composables/useDynamicHeaderTab'
+import { useKeepAliveRefresh, type KeepAliveRefreshContext } from '@/composables/useKeepAliveRefresh'
 
 // 国际化
 const { t } = useI18n()
@@ -739,9 +740,13 @@ const filterPlugins = computed(() => {
 })
 
 // 获取插件列表数据
-async function fetchInstalledPlugins() {
+async function fetchInstalledPlugins(context: KeepAliveRefreshContext = {}) {
+  const showLoading = !context.silent || !isRefreshed.value
+
   try {
-    loading.value = true
+    if (showLoading) {
+      loading.value = true
+    }
     dataList.value = await api.get('plugin/', {
       params: {
         state: 'installed',
@@ -749,17 +754,24 @@ async function fetchInstalledPlugins() {
     })
     // 排序
     sortPluginOrder()
-    loading.value = false
     isRefreshed.value = true
   } catch (error) {
     console.error(error)
+  } finally {
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
 // 获取未安装插件列表数据
-async function fetchUninstalledPlugins(force: boolean = false) {
+async function fetchUninstalledPlugins(force: boolean = false, context: KeepAliveRefreshContext = {}) {
+  const showLoading = !context.silent || !isAppMarketLoaded.value
+
   try {
-    loading.value = true
+    if (showLoading) {
+      loading.value = true
+    }
     uninstalledList.value = await api.get('plugin/', {
       params: {
         state: 'market',
@@ -776,7 +788,6 @@ async function fetchUninstalledPlugins(force: boolean = false) {
         }
       }
     }
-    loading.value = false
     isRefreshed.value = true
     // 更新插件市场列表
     // 排除已安装且有更新的，上面的问题在于"本地存在未安装的旧版本插件且云端有更新时"不会在插件市场展示
@@ -788,6 +799,10 @@ async function fetchUninstalledPlugins(force: boolean = false) {
     isAppMarketLoaded.value = true
   } catch (error) {
     console.error(error)
+  } finally {
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
@@ -801,10 +816,10 @@ async function getPluginStatistics() {
 }
 
 // 加载所有数据
-async function refreshData() {
-  await fetchInstalledPlugins()
-  await fetchUninstalledPlugins()
-  getPluginStatistics()
+async function refreshData(context: KeepAliveRefreshContext = {}) {
+  await fetchInstalledPlugins(context)
+  await fetchUninstalledPlugins(false, context)
+  await getPluginStatistics()
   // 重新加载文件夹配置，确保分身插件能正确显示在文件夹中
   await loadPluginFolders()
 }
@@ -873,15 +888,35 @@ function marketSettingDone() {
 
 // 手动刷新插件市场
 async function refreshMarket() {
-  isMarketRefreshing.value = true
+  const showMarketLoading = !isAppMarketLoaded.value
+  if (showMarketLoading) {
+    isMarketRefreshing.value = true
+  }
   try {
-    await fetchUninstalledPlugins(true)
-    getPluginStatistics()
+    await fetchUninstalledPlugins(true, { silent: isAppMarketLoaded.value, source: 'manual' })
+    await getPluginStatistics()
   } catch (error) {
     console.error(error)
   } finally {
-    isMarketRefreshing.value = false
+    if (showMarketLoading) {
+      isMarketRefreshing.value = false
+    }
   }
+}
+
+async function refreshActiveTabData(context: KeepAliveRefreshContext = {}) {
+  if (sortMode.value || isDraggingSortMode.value) return
+
+  if (activeTab.value === 'market') {
+    await fetchUninstalledPlugins(false, context)
+    await getPluginStatistics()
+    return
+  }
+
+  await fetchInstalledPlugins(context)
+  await getPluginStatistics()
+  // 文件夹配置可能在其它入口被插件操作改变，重新进入时同步一次。
+  await loadPluginFolders()
 }
 
 function parseLocalRepoPath(repoUrl: string | undefined) {
@@ -923,6 +958,11 @@ watch([dataList, installedFilter, hasUpdateFilter, enabledFilter], () => {
 function loadMarketMore({ done }: { done: any }) {
   // 从 dataList 中获取最前面的 20 个元素
   const itemsToMove = sortedUninstalledList.value.splice(0, 20)
+  if (itemsToMove.length === 0) {
+    done('empty')
+    return
+  }
+
   displayUninstalledList.value.push(...itemsToMove)
   done('ok')
 }
@@ -940,6 +980,14 @@ onMounted(async () => {
       plugin.page_open = true
     }
   }
+})
+
+const { refresh: refreshKeepAliveData } = useKeepAliveRefresh(refreshActiveTabData)
+
+watch(activeTab, (newTab, oldTab) => {
+  if (!oldTab || newTab === oldTab) return
+
+  refreshKeepAliveData({ silent: true, source: 'tab' })
 })
 
 function openPluginSearchDialog() {
@@ -1669,10 +1717,13 @@ function onDragStartPlugin(evt: any) {
       <VWindowItem value="market">
         <transition name="fade-slide" appear>
           <div>
-            <LoadingBanner v-if="!isAppMarketLoaded || isMarketRefreshing" class="mt-12" />
+            <LoadingBanner
+              v-if="!isAppMarketLoaded || (isMarketRefreshing && displayUninstalledList.length === 0)"
+              class="mt-12"
+            />
             <!-- 资源列表 -->
             <VInfiniteScroll
-              v-if="isAppMarketLoaded && !isMarketRefreshing"
+              v-if="isAppMarketLoaded && !(isMarketRefreshing && displayUninstalledList.length === 0)"
               mode="intersect"
               side="end"
               :items="displayUninstalledList"

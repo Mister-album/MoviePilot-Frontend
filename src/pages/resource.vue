@@ -11,10 +11,15 @@ import TorrentFilterBar from '@/components/filter/TorrentFilterBar.vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalSettingsStore } from '@/stores/global'
 import { useTorrentFilter, type FilterState } from '@/composables/useTorrentFilter'
+import { useDynamicButton } from '@/composables/useDynamicButton'
+import { usePWA } from '@/composables/usePWA'
 import { useToast } from 'vue-toastification'
+import { useKeepAliveRefresh } from '@/composables/useKeepAliveRefresh'
 
 // 国际化
 const { t } = useI18n()
+
+const { appMode } = usePWA()
 
 // 提示框
 const toast = useToast()
@@ -37,6 +42,14 @@ interface SearchParams {
   year: string
   season: string
   sites: string
+}
+
+interface LastSearchContextResponse {
+  success?: boolean
+  data?: {
+    params?: Partial<SearchParams>
+    results?: Context[]
+  }
 }
 
 const resourceSearchParamsStorageKey = 'MP_ResourceSearchParams'
@@ -106,8 +119,53 @@ function rememberSearchParams(params: SearchParams) {
   saveStoredSearchParams(nextParams)
 }
 
+function applyRememberedSearchParams(params?: Partial<SearchParams> | null, syncActive: boolean = false) {
+  const nextParams = normalizeSearchParams(params)
+  if (!hasSearchKeyword(nextParams)) return null
+
+  rememberSearchParams(nextParams)
+  if (syncActive || !hasSearchKeyword(activeSearchParams.value)) {
+    activeSearchParams.value = { ...nextParams }
+  }
+  return nextParams
+}
+
 if (hasSearchKeyword(initialSearchParams)) {
   rememberSearchParams(initialSearchParams)
+}
+
+async function fetchLastSearchContext() {
+  try {
+    const result = (await api.get('search/last/context')) as LastSearchContextResponse
+    applyRememberedSearchParams(result?.data?.params, true)
+    return Array.isArray(result?.data?.results) ? result.data.results : []
+  } catch (error) {
+    console.warn('读取上次搜索上下文失败，回退到仅加载结果:', error)
+    const results = await api.get('search/last')
+    return (results as unknown as Context[]) || []
+  }
+}
+
+async function resolveRefreshSearchParams() {
+  if (hasSearchKeyword(activeSearchParams.value)) {
+    return { ...activeSearchParams.value }
+  }
+  if (lastSearchParams.value && hasSearchKeyword(lastSearchParams.value)) {
+    return { ...lastSearchParams.value }
+  }
+
+  const storedParams = loadStoredSearchParams()
+  if (storedParams) {
+    applyRememberedSearchParams(storedParams, true)
+    return { ...storedParams }
+  }
+
+  await fetchLastSearchContext()
+  if (lastSearchParams.value && hasSearchKeyword(lastSearchParams.value)) {
+    return { ...lastSearchParams.value }
+  }
+
+  return null
 }
 
 // 查询TMDBID或标题
@@ -172,6 +230,19 @@ const filteredCardDataList = ref<Array<SearchTorrent>>([])
 // 是否刷新过
 const isRefreshed = ref(false)
 
+const viewToggleIcon = computed(() => (viewType.value === 'card' ? 'mdi-view-list-outline' : 'mdi-view-grid-outline'))
+
+// 搜索结果视图切换收纳到页面动态按钮中，和仪表盘的设置按钮保持一致。
+function toggleViewType() {
+  changeViewType(viewType.value === 'card' ? 'row' : 'card')
+}
+
+useDynamicButton({
+  icon: viewToggleIcon,
+  onClick: toggleViewType,
+  show: computed(() => appMode.value && isRefreshed.value),
+})
+
 // 是否正在重新搜索
 const isRefreshing = ref(false)
 
@@ -186,6 +257,8 @@ const progressEnabled = ref(false)
 
 // 进度是否激活
 const progressActive = ref(false)
+
+let progressResetTimer: ReturnType<typeof setTimeout> | null = null
 
 // 是否显示搜索进度
 const isSearchProgressVisible = computed(
@@ -215,10 +288,12 @@ const errorTitle = ref(t('resource.noData'))
 const errorDescription = ref(t('resource.noResourceFound'))
 
 let searchEventSource: EventSource | null = null
+let searchStreamIdleTimer: ReturnType<typeof setTimeout> | null = null
 
 const streamPreviewLimit = 24
 const streamUiFlushDelay = 1000
 const streamPreviewBufferLimit = streamPreviewLimit * 4
+const searchStreamIdleTimeout = 90_000
 
 const streamTotalCount = ref(0)
 const streamPreviewDataList = ref<Array<Context>>([])
@@ -226,6 +301,9 @@ const streamPreviewDataList = ref<Array<Context>>([])
 const displayResourceCount = computed(() =>
   progressActive.value ? streamTotalCount.value : torrentFilter.totalFilteredCount.value,
 )
+
+// 搜索中只显示进度区域，避免结果抬头和进度条同时占用顶部空间。
+const showResultHeader = computed(() => isRefreshed.value && !progressActive.value)
 
 let pendingStreamItems: Array<Context> = []
 let streamFlushTimer: ReturnType<typeof setTimeout> | null = null
@@ -290,6 +368,7 @@ const watchProgressValue = watch(
 
 // 使用SSE监听加载进度
 function startLoadingProgress() {
+  clearProgressResetTimer()
   watchProgressValue.resume()
   progressText.value = t('resource.searching')
   progressValue.value = 0
@@ -304,17 +383,40 @@ function stopLoadingProgress() {
 
   // 确保进度显示100%，然后再渐进清零
   progressValue.value = 100
-  setTimeout(() => {
+  clearProgressResetTimer()
+  progressResetTimer = setTimeout(() => {
+    progressResetTimer = null
     progressValue.value = 0
     progressEnabled.value = false
   }, 1500)
 }
 
+function clearProgressResetTimer() {
+  if (progressResetTimer) {
+    clearTimeout(progressResetTimer)
+    progressResetTimer = null
+  }
+}
+
 // 关闭SSE连接
-function closeSearchEventSource() {
+function closeSearchEventSource(source?: EventSource) {
+  if (source && searchEventSource !== source) {
+    source.close()
+    return
+  }
+
   if (searchEventSource) {
     searchEventSource.close()
     searchEventSource = null
+  }
+
+  clearSearchStreamIdleTimer()
+}
+
+function clearSearchStreamIdleTimer() {
+  if (searchStreamIdleTimer) {
+    clearTimeout(searchStreamIdleTimer)
+    searchStreamIdleTimer = null
   }
 }
 
@@ -510,6 +612,13 @@ function handleSearchStreamMessage(eventData: { [key: string]: any }) {
 
 // 按请求搜索
 async function searchByRequest(params: SearchParams, requestToken?: string) {
+  const items = await requestSearchResults(params, requestToken)
+  streamTotalCount.value = items.length
+  setStreamResults(items)
+}
+
+// 静默刷新使用普通请求，保留当前结果直到新数据完整返回，避免返回页面时露出搜索进度态。
+async function requestSearchResults(params: SearchParams, requestToken?: string) {
   let result: { [key: string]: any }
   // 如果keyword的格式是 xxxx:xxxxx 且:前面的xxxx为字符，则按照媒体ID格式搜索
   if (/^[a-zA-Z]+:/.test(params.keyword)) {
@@ -536,13 +645,11 @@ async function searchByRequest(params: SearchParams, requestToken?: string) {
   }
 
   if (result && result.success) {
-    streamTotalCount.value = result.data?.length || 0
-    setStreamResults(result.data || [])
-  } else {
-    errorDescription.value = result?.message || t('resource.noResourceFound')
-    streamTotalCount.value = 0
-    setStreamResults([])
+    return (result.data || []) as Context[]
   }
+
+  errorDescription.value = result?.message || t('resource.noResourceFound')
+  throw new Error(errorDescription.value)
 }
 
 // 按流搜索
@@ -554,36 +661,48 @@ function searchByStream(params: SearchParams, requestToken?: string) {
     const source = new EventSource(buildSearchStreamUrl(params, requestToken))
     searchEventSource = source
 
+    const settleSearchStream = (callback: () => void) => {
+      if (settled) return
+
+      settled = true
+      closeSearchEventSource(source)
+      callback()
+    }
+
+    const resetIdleTimeout = () => {
+      clearSearchStreamIdleTimer()
+      searchStreamIdleTimer = setTimeout(() => {
+        settleSearchStream(() => reject(new Error(t('resource.noResourceFound'))))
+      }, searchStreamIdleTimeout)
+    }
+
+    resetIdleTimeout()
+
     source.onmessage = event => {
+      if (source !== searchEventSource || settled) return
+
       try {
+        resetIdleTimeout()
         const eventData = JSON.parse(event.data)
         handleSearchStreamMessage(eventData)
 
         if (eventData.type === 'error') {
-          settled = true
-          closeSearchEventSource()
-          resolve()
+          settleSearchStream(resolve)
           return
         }
 
         if (eventData.type === 'done') {
-          settled = true
-          closeSearchEventSource()
-          resolve()
+          settleSearchStream(resolve)
         }
       } catch (error) {
-        settled = true
-        closeSearchEventSource()
-        reject(error)
+        settleSearchStream(() => reject(error))
       }
     }
 
     source.onerror = () => {
-      if (settled) return
+      if (source !== searchEventSource || settled) return
 
-      settled = true
-      closeSearchEventSource()
-      reject(new Error(t('resource.noResourceFound')))
+      settleSearchStream(() => reject(new Error(t('resource.noResourceFound'))))
     }
   })
 }
@@ -601,22 +720,26 @@ function changeViewType(newType: string) {
 }
 
 // 获取搜索列表数据
-async function fetchData(options: { force?: boolean; params?: SearchParams } = {}) {
+async function fetchData(options: { force?: boolean; params?: SearchParams; silent?: boolean } = {}) {
   const currentSearchParams = { ...(options.params ?? activeSearchParams.value) }
   if (hasSearchKeyword(currentSearchParams)) {
     activeSearchParams.value = { ...currentSearchParams }
     rememberSearchParams(currentSearchParams)
   }
   const requestToken = options.force || Boolean(currentSearchParams.keyword) ? createSearchRequestToken() : undefined
+  const silentRefresh = Boolean(options.silent && isRefreshed.value && rawDataList.value.length > 0)
 
   try {
     enableFilterAnimation.value = true
     if (!hasSearchKeyword(currentSearchParams)) {
-      // 查询上次搜索结果
-      const results = await api.get('search/last', {
-        params: requestToken ? { _ts: requestToken } : undefined,
-      })
-      setStreamResults((results as unknown as Context[]) || [])
+      // 查询上次搜索结果，并同步可重放的搜索参数
+      const results = await fetchLastSearchContext()
+      setStreamResults(results || [])
+    } else if (silentRefresh) {
+      // keep-alive 重新进入时后台刷新，旧结果继续显示，等新结果完整返回后一次性替换。
+      const results = await requestSearchResults(currentSearchParams, requestToken)
+      streamTotalCount.value = results.length
+      setStreamResults(results)
     } else {
       resetSearchResults()
       startLoadingProgress()
@@ -646,11 +769,15 @@ async function fetchData(options: { force?: boolean; params?: SearchParams } = {
 // 重新搜索（使用相同参数重新触发搜索）
 async function refreshSearch() {
   if (isRefreshing.value || progressActive.value) return
-  const refreshParams = lastSearchParams.value ?? activeSearchParams.value
   isRefreshing.value = true
   try {
     // 重新搜索时退出 AI 视图，其余状态由 fetchData 内部重置
     showingAiResults.value = false
+    const refreshParams = await resolveRefreshSearchParams()
+    if (!refreshParams) {
+      console.warn('未找到可用于重新搜索的搜索参数')
+      return
+    }
     await fetchData({ force: true, params: refreshParams })
   } catch (error) {
     console.error('重新搜索失败:', error)
@@ -952,10 +1079,20 @@ onMounted(async () => {
   void fetchData()
 })
 
+useKeepAliveRefresh(async () => {
+  if (progressActive.value || isRefreshing.value || isRecommending.value || showingAiResults.value) return
+
+  const refreshParams = await resolveRefreshSearchParams()
+  if (!refreshParams) return
+
+  await fetchData({ force: true, params: refreshParams, silent: true })
+})
+
 // 卸载时停止轮询
 onUnmounted(() => {
   closeSearchEventSource()
   stopLoadingProgress()
+  clearProgressResetTimer()
   stopAiRecommendPolling()
   clearStreamPreviewState()
 })
@@ -1026,105 +1163,98 @@ onUnmounted(() => {
       </div>
     </VFadeTransition>
 
-    <!-- 精简标题栏：搜索过后保持挂载，加载中由按钮 :disabled / :loading 表达状态 -->
-    <VCard v-if="isRefreshed" class="search-header d-flex align-center mb-3">
-      <div class="search-info-container">
-        <div class="search-title text-moviepilot">
-          <span class="d-none d-sm-inline">{{ t('resource.searchResults') }}</span>
-          <span class="d-inline d-sm-none">{{ t('navItems.searchResult') }}</span>
-        </div>
-        <div v-if="hasSearchTags" class="search-tags d-flex flex-wrap mt-1">
-          <VChip v-if="keyword" class="search-tag" color="primary" size="small" variant="flat">
-            {{ t('resource.keyword') }}: {{ keyword }}
-          </VChip>
-          <VChip v-if="title" class="search-tag" color="primary" size="small" variant="flat">
-            {{ t('resource.title') }}: {{ title }}
-          </VChip>
-          <VChip v-if="year" class="search-tag" color="primary" size="small" variant="flat">
-            {{ t('resource.year') }}: {{ year }}
-          </VChip>
-          <VChip v-if="season" class="search-tag" color="primary" size="small" variant="flat">
-            {{ t('resource.season') }}: {{ season }}
-          </VChip>
-        </div>
-      </div>
+    <!-- 结果抬头：只承载搜索上下文和快捷动作，筛选控制交给下方工具条。 -->
+    <VCard v-if="showResultHeader" class="search-header result-toolbar mb-2" elevation="0">
+      <div class="result-toolbar__content">
+        <VAvatar class="result-toolbar__icon" rounded="lg" size="42">
+          <VIcon icon="mdi-movie-search" size="24" />
+        </VAvatar>
 
-      <VSpacer />
-
-      <!-- 重新搜索按钮 -->
-      <VBtn
-        variant="text"
-        size="small"
-        icon
-        class="me-2 refresh-search-btn"
-        :loading="isRefreshing"
-        :disabled="isRefreshing || progressActive"
-        @click="refreshSearch"
-      >
-        <VIcon icon="mdi-refresh" size="20" />
-        <VTooltip activator="parent" location="top">
-          {{ t('resource.refreshSearch') }}
-        </VTooltip>
-      </VBtn>
-
-      <!-- AI操作按钮组 -->
-      <div v-if="aiRecommendEnabled && originalDataList.length > 0" class="ai-toggle-container me-2">
-        <div class="ai-toggle-buttons">
-          <VBtn
-            variant="text"
-            size="small"
-            rounded="0"
-            @click="toggleAiRecommend"
-            :disabled="isRecommending || !aiStatusChecked"
-            height="44"
-            class="ps-4 pe-3 ai-recommend-btn"
-            :class="{ 'ai-active': showingAiResults }"
-          >
-            <template #prepend>
-              <VIcon icon="lucide:sparkles" size="18" class="ai-icon" :class="{ 'ai-icon-active': showingAiResults }" />
-            </template>
-            <span class="ai-text" :class="{ 'ai-text-active': showingAiResults }">
-              {{ t('resource.aiRecommend') }}
-            </span>
-          </VBtn>
-
-          <VExpandXTransition>
-            <div v-if="aiRecommended || isRecommending" class="d-flex align-center">
-              <div class="ai-divider" :style="{ opacity: showingAiResults ? 0 : 1 }"></div>
-              <VBtn
-                variant="text"
-                size="small"
-                rounded="0"
-                :disabled="isRecommending || !aiStatusChecked"
-                @click="reRecommend"
-                height="44"
-                min-width="38"
-                class="px-0"
-              >
-                <VIcon
-                  :icon="isRecommending ? 'line-md:loading-twotone-loop' : 'mdi-refresh'"
-                  size="18"
-                  class="ai-refresh-icon"
-                />
-                <VTooltip activator="parent" location="top">
-                  {{ t('resource.reRecommend') }}
-                </VTooltip>
-              </VBtn>
-            </div>
-          </VExpandXTransition>
+        <div class="search-info-container">
+          <div class="search-title text-moviepilot">
+            <span class="d-none d-sm-inline">{{ t('resource.searchResults') }}</span>
+            <span class="d-inline d-sm-none">{{ t('navItems.searchResult') }}</span>
+          </div>
+          <div v-if="hasSearchTags" class="search-tags d-flex flex-wrap mt-1">
+            <VChip v-if="keyword" class="search-tag" color="primary" size="small" variant="tonal">
+              {{ t('resource.keyword') }}: {{ keyword }}
+            </VChip>
+            <VChip v-if="title" class="search-tag" color="primary" size="small" variant="tonal">
+              {{ t('resource.title') }}: {{ title }}
+            </VChip>
+            <VChip v-if="year" class="search-tag" color="primary" size="small" variant="tonal">
+              {{ t('resource.year') }}: {{ year }}
+            </VChip>
+            <VChip v-if="season" class="search-tag" color="primary" size="small" variant="tonal">
+              {{ t('resource.season') }}: {{ season }}
+            </VChip>
+          </div>
         </div>
       </div>
 
-      <!-- 重新设计的视图切换按钮 -->
-      <div class="view-toggle-container">
-        <div class="view-toggle-buttons">
-          <div class="active-indicator" :class="viewType"></div>
-          <button class="view-toggle-btn" :class="{ active: viewType === 'card' }" @click="changeViewType('card')">
-            <VIcon icon="mdi-view-grid-outline" :color="viewType === 'card' ? 'primary' : undefined" />
-          </button>
-          <button class="view-toggle-btn" :class="{ active: viewType === 'row' }" @click="changeViewType('row')">
-            <VIcon icon="mdi-view-list-outline" :color="viewType === 'row' ? 'primary' : undefined" />
-          </button>
+      <div class="result-toolbar__actions">
+        <!-- 重新搜索按钮 -->
+        <VBtn
+          variant="text"
+          size="small"
+          icon
+          class="refresh-search-btn"
+          :loading="isRefreshing"
+          :disabled="isRefreshing || progressActive"
+          @click="refreshSearch"
+        >
+          <VIcon icon="mdi-refresh" size="20" />
+          <VTooltip activator="parent" location="top">
+            {{ t('resource.refreshSearch') }}
+          </VTooltip>
+        </VBtn>
+
+        <!-- AI操作按钮组 -->
+        <div v-if="aiRecommendEnabled && originalDataList.length > 0" class="ai-toggle-container">
+          <div class="ai-toggle-buttons">
+            <VBtn
+              variant="text"
+              size="small"
+              rounded="0"
+              @click="toggleAiRecommend"
+              :disabled="isRecommending || !aiStatusChecked"
+              height="44"
+              class="ps-4 pe-3 ai-recommend-btn"
+              :class="{ 'ai-active': showingAiResults }"
+            >
+              <template #prepend>
+                <VIcon icon="lucide:sparkles" size="18" class="ai-icon" :class="{ 'ai-icon-active': showingAiResults }" />
+              </template>
+              <span class="ai-text" :class="{ 'ai-text-active': showingAiResults }">
+                {{ t('resource.aiRecommend') }}
+              </span>
+            </VBtn>
+
+            <VExpandXTransition>
+              <div v-if="aiRecommended || isRecommending" class="d-flex align-center">
+                <div class="ai-divider" :style="{ opacity: showingAiResults ? 0 : 1 }"></div>
+                <VBtn
+                  variant="text"
+                  size="small"
+                  rounded="0"
+                  :disabled="isRecommending || !aiStatusChecked"
+                  @click="reRecommend"
+                  height="44"
+                  min-width="38"
+                  class="px-0"
+                >
+                  <VIcon
+                    :icon="isRecommending ? 'line-md:loading-twotone-loop' : 'mdi-refresh'"
+                    size="18"
+                    class="ai-refresh-icon"
+                  />
+                  <VTooltip activator="parent" location="top">
+                    {{ t('resource.reRecommend') }}
+                  </VTooltip>
+                </VBtn>
+              </div>
+            </VExpandXTransition>
+          </div>
         </div>
       </div>
     </VCard>
@@ -1232,9 +1362,22 @@ onUnmounted(() => {
 
     <!-- 初始加载状态 -->
     <LoadingBanner v-else-if="!isRefreshed && !isSearchLoading" />
+
+    <Teleport to="body" v-if="route.path === '/resource'">
+      <div v-if="isRefreshed && !appMode" class="compact-fab-stack">
+        <VFab
+          :icon="viewToggleIcon"
+          color="primary"
+          appear
+          class="compact-fab compact-fab--primary"
+          @click="toggleViewType"
+        />
+      </div>
+    </Teleport>
+
     <!-- 滚动到顶部按钮 -->
     <Teleport to="body" v-if="route.path === '/resource'">
-      <VScrollToTopBtn />
+      <VScrollToTopBtn :offset-fab="isRefreshed && !appMode" />
     </Teleport>
   </div>
 </template>
@@ -1345,80 +1488,65 @@ onUnmounted(() => {
   }
 }
 
-/* 精简标题栏样式 */
+/* 结果抬头样式 */
 .search-header {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  padding-block: 8px;
-  padding-inline: 12px;
+  border: 1px solid rgba(var(--v-theme-primary), 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(var(--v-theme-primary), 0.1), rgba(var(--v-theme-surface), 0) 44%),
+    rgb(var(--v-theme-surface));
 }
 
-.search-info-container {
+.result-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-block: 12px;
+  padding-inline: 14px;
+}
+
+.result-toolbar__content {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
   gap: 12px;
+  min-inline-size: 0;
 }
 
-.search-title {
-  font-size: 1.2rem;
-  font-weight: 600;
+.result-toolbar__icon {
+  flex: 0 0 auto;
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
 }
 
-.search-tags {
+.result-toolbar__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: 8px;
 }
 
+.search-info-container {
+  min-inline-size: 0;
+}
+
+.search-title {
+  overflow: hidden;
+  font-size: 1.1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-tags {
+  gap: 6px;
+}
+
 .search-tag {
+  max-inline-size: min(100%, 220px);
   font-size: 0.75rem;
-}
-
-/* 重新设计的视图切换按钮 */
-.view-toggle-container {
-  position: relative;
-}
-
-.view-toggle-buttons {
-  position: relative;
-  display: flex;
-  padding: 4px;
-  border-radius: 8px;
-  background-color: rgba(var(--v-theme-surface-variant), 0.1);
-  isolation: isolate; /* Create new stacking context */
-}
-
-.active-indicator {
-  position: absolute;
-  z-index: 1;
-  border-radius: 6px;
-  background-color: rgb(var(--v-theme-surface));
-  block-size: 36px;
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 12%),
-    0 1px 2px rgba(0, 0, 0, 24%);
-  inline-size: 40px;
-  inset-block-start: 4px;
-  inset-inline-start: 4px;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.active-indicator.row {
-  transform: translateX(40px);
-}
-
-.view-toggle-btn {
-  position: relative;
-  z-index: 2; /* Sit on top of indicator */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  block-size: 36px;
-  cursor: pointer;
-  inline-size: 40px;
-  transition: all 0.2s ease;
-}
-
-.view-toggle-btn:hover:not(.active) {
-  border-radius: 6px;
-  background-color: rgba(var(--v-theme-primary), 0.05);
 }
 
 /* 重新搜索按钮 */
@@ -1530,12 +1658,31 @@ onUnmounted(() => {
 
 @media (width <= 600px) {
   .search-header {
-    padding-block: 6px;
-    padding-inline: 12px;
+    border-radius: 8px;
+  }
+
+  .result-toolbar {
+    align-items: flex-start;
+    gap: 10px;
+    padding-block: 10px;
+    padding-inline: 10px;
+  }
+
+  .result-toolbar__content {
+    gap: 10px;
+  }
+
+  .result-toolbar__icon {
+    block-size: 36px !important;
+    inline-size: 36px !important;
+  }
+
+  .result-toolbar__actions {
+    gap: 6px;
   }
 
   .search-title {
-    font-size: 1.1rem;
+    font-size: 1rem;
     white-space: nowrap;
   }
 
@@ -1592,30 +1739,6 @@ onUnmounted(() => {
 
   .search-skeleton-grid {
     grid-template-columns: 1fr;
-  }
-
-  .view-toggle-container {
-    flex-shrink: 0;
-  }
-
-  .view-toggle-buttons {
-    padding: 2px;
-  }
-
-  .active-indicator {
-    block-size: 32px;
-    inline-size: 36px;
-    inset-block-start: 2px;
-    inset-inline-start: 2px;
-  }
-
-  .active-indicator.row {
-    transform: translateX(36px);
-  }
-
-  .view-toggle-btn {
-    block-size: 32px;
-    inline-size: 36px;
   }
 
   .refresh-search-btn {

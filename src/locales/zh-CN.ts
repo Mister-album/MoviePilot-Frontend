@@ -321,7 +321,8 @@ export default {
   settingTabs: {
     system: {
       title: '系统',
-      description: '基础设置、下载器（Qbittorrent、Transmission）、媒体服务器（Emby、极影视、Jellyfin、Plex、飞牛影视、绿联影视）',
+      description:
+        '基础设置、下载器（Qbittorrent、Transmission）、媒体服务器（Emby、极影视、Jellyfin、Plex、飞牛影视、绿联影视）',
     },
     directory: {
       title: '存储 & 目录',
@@ -978,6 +979,8 @@ export default {
     ranking: '排名',
     noStatisticsData: '暂无分享统计数据',
     bestVersion: '洗版中',
+    bestVersionEpisodeShort: '分集',
+    bestVersionWholeShort: '全集',
     completed: '订阅完成',
     subscribing: '订阅中',
     notStarted: '未开始',
@@ -1023,7 +1026,7 @@ export default {
     doubanGlobalTVRankings: '豆瓣全球剧集榜',
     noCategoryContent: '当前分类下没有可显示的内容',
     configureContent: '设置显示内容',
-    customizeContent: '自定义内容',
+    customizeContent: '自定义推荐',
     selectContentToDisplay: '选择您想在页面显示的内容',
     selectAll: '全选',
     selectNone: '全不选',
@@ -1440,7 +1443,8 @@ export default {
       audioInputApiKey: '音频输入 API密钥',
       audioInputApiKeyHint: '音频输入转写使用的 API 密钥',
       audioInputBaseUrl: '音频输入基础URL',
-      audioInputBaseUrlHint: '音频输入接口基础URL，Chat Audio 类服务可填写对应兼容地址，MiMo 默认 https://api.xiaomimimo.com/v1',
+      audioInputBaseUrlHint:
+        '音频输入接口基础URL，Chat Audio 类服务可填写对应兼容地址，MiMo 默认 https://api.xiaomimimo.com/v1',
       audioInputModel: '音频输入模型',
       audioInputModelHint: '用于将音频内容转换为文字的模型名称',
       audioInputLanguage: '识别语言',
@@ -1450,7 +1454,8 @@ export default {
       audioOutputApiKey: '音频输出 API密钥',
       audioOutputApiKeyHint: '文字转语音使用的 API 密钥',
       audioOutputBaseUrl: '音频输出基础URL',
-      audioOutputBaseUrlHint: '音频输出接口基础URL，Chat Audio 类服务可填写对应兼容地址，MiMo 默认 https://api.xiaomimimo.com/v1',
+      audioOutputBaseUrlHint:
+        '音频输出接口基础URL，Chat Audio 类服务可填写对应兼容地址，MiMo 默认 https://api.xiaomimimo.com/v1',
       audioOutputModel: '音频输出模型',
       audioOutputModelHint: '用于将文字内容转换为语音的模型名称',
       audioOutputVoice: '语音音色',
@@ -1558,8 +1563,8 @@ export default {
       fanartEnableHint: '使用 fanart.tv 的图片数据',
       fanartLang: 'Fanart语言',
       fanartLangHint: '设置Fanart图片的语言偏好，多选时按优先级顺序排列',
-      recognizePluginFirst: "优先使用插件识别",
-      recognizePluginFirstHint: "优先调用插件识别媒体信息，若插件命中则不再调用原生识别",
+      recognizePluginFirst: '优先使用插件识别',
+      recognizePluginFirstHint: '优先调用插件识别媒体信息，若插件命中则不再调用原生识别',
       mediaRecognizeShare: '共享使用媒体识别数据',
       mediaRecognizeShareHint: '识别成功后上报关键字与媒体ID，识别失败时优先回查共享识别结果',
       githubProxy: 'Github加速代理',
@@ -1692,7 +1697,7 @@ export default {
         skipDesc: '跳过刮削，不生成该文件',
         missingOnlyDesc: '仅在缺失时刮削，已存在则保持不变',
         overwriteDesc: '始终刮削，已存在则覆盖',
-      }
+      },
     },
     site: {
       siteSync: '站点同步',
@@ -1716,7 +1721,7 @@ export default {
       siteDataRefresh: '站点数据刷新',
       siteOptions: '站点选项',
       browserEmulation: '浏览器仿真',
-      browserEmulationHint: '站点访问仿真方式，支持 Playwright 或 FlareSolverr',
+      browserEmulationHint: '站点访问仿真方式，支持 CloakBrowser 或 FlareSolverr',
       flaresolverrUrl: 'FlareSolverr 服务地址',
       flaresolverrUrlHint: '当仿真方式为 FlareSolverr 时生效，例如：http://127.0.0.1:8191',
       siteDataRefreshInterval: '站点数据刷新间隔',
@@ -2546,7 +2551,7 @@ export default {
       bestVersionFull: '全集洗版',
       bestVersionFullHint: '只下载覆盖全集的整包资源，不按单集拆包下载',
       searchImdbid: '使用 ImdbID 搜索',
-      searchImdbidHint: '开使用 ImdbID 精确搜索资源',
+      searchImdbidHint: '开启后使用 ImdbID 精确搜索资源',
       showEditDialog: '订阅时编辑更多规则',
       showEditDialogHint: '添加订阅时显示此编辑订阅对话框',
       include: '包含（关键字、正则式）',
@@ -2902,7 +2907,7 @@ export default {
   },
   transferHistory: {
     title: '转移历史',
-    searchPlaceholder: '搜索转移记录',
+    searchPlaceholder: '搜索（支持 * ? 通配符）',
     titleColumn: '标题',
     pathColumn: '路径',
     modeColumn: '转移方式',

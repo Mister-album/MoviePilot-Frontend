@@ -287,6 +287,7 @@ onMounted(() => {
               :keyword="subscribeFilter"
               :status-filter="subscribeStatusFilter ?? ''"
               :sort-mode="subscribeSortMode"
+              :active="activeTab === 'mysub'"
               @update:sort-mode="subscribeSortMode = $event"
             />
           </div>

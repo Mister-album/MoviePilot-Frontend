@@ -11,13 +11,14 @@ import ProgressDialog from '../dialog/ProgressDialog.vue'
 import { useDisplay } from 'vuetify'
 import MediaInfoDialog from '../dialog/MediaInfoDialog.vue'
 import { useI18n } from 'vue-i18n'
-import { useBackgroundOptimization } from '@/composables/useBackgroundOptimization'
+import { useBackground } from '@/composables/useBackground'
 import { usePWA } from '@/composables/usePWA'
 import { useAvailableHeight } from '@/composables/useAvailableHeight'
+import { useKeepAliveRefresh, type KeepAliveRefreshContext } from '@/composables/useKeepAliveRefresh'
 
 // 国际化
 const { t } = useI18n()
-const { useProgressSSE } = useBackgroundOptimization()
+const { useProgressSSE } = useBackground()
 
 // 显示器宽度
 const display = useDisplay()
@@ -43,6 +44,10 @@ const inProps = defineProps({
   },
   sort: String,
   showTree: Boolean,
+  active: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 // 对外事件
@@ -229,34 +234,45 @@ function changeSelectMode() {
 }
 
 // 调API加载文件夹内的内容
-async function list_files() {
-  loading.value = true
-  const takeURISnapshot = () => [inProps.item.storage, inProps.item.path].join(':/');
-  const prevURI = takeURISnapshot();
-  emit('loading', true)
+async function list_files(context: KeepAliveRefreshContext = {}) {
+  const silentRefresh = Boolean(context.silent && items.value.length > 0)
+  const takeURISnapshot = () => [inProps.item.storage, inProps.item.path].join(':/')
+  const prevURI = takeURISnapshot()
 
-  // 参数
-  const url = inProps.endpoints?.list.url.replace(/{sort}/g, inProps.sort || 'name')
-
-  const config: AxiosRequestConfig<FileItem> = {
-    url,
-    method: inProps.endpoints?.list.method || 'get',
-    data: inProps.item,
+  if (!silentRefresh) {
+    loading.value = true
+    emit('loading', true)
   }
 
-  // 加载数据
-  const data = ((await inProps.axios.request<FileItem[], FileItem[]>(config))) ?? []
-  // 如果当前路径已经变化，则放弃此次加载结果
-  if (prevURI !== takeURISnapshot()) {
-    return;
-  }
-  items.value = data
-  syncSelectedItems(data)
-  emit('loading', false)
-  loading.value = false
+  try {
+    // 参数
+    const url = inProps.endpoints?.list.url.replace(/{sort}/g, inProps.sort || 'name')
 
-  // 通知父组件文件列表更新
-  emit('items-updated', items.value)
+    const config: AxiosRequestConfig<FileItem> = {
+      url,
+      method: inProps.endpoints?.list.method || 'get',
+      data: inProps.item,
+    }
+
+    // 加载数据
+    const data = ((await inProps.axios.request<FileItem[], FileItem[]>(config))) ?? []
+    // 如果当前路径已经变化，则放弃此次加载结果
+    if (prevURI !== takeURISnapshot()) {
+      return
+    }
+    items.value = data
+    syncSelectedItems(data)
+
+    // 通知父组件文件列表更新
+    emit('items-updated', items.value)
+  } catch (error) {
+    console.error(error)
+  } finally {
+    if (!silentRefresh) {
+      emit('loading', false)
+      loading.value = false
+    }
+  }
 }
 
 // 删除项目
@@ -642,7 +658,7 @@ function handleProgressMessage(event: MessageEvent) {
   }
 }
 
-// 使用优化的进度SSE连接
+// 使用进度SSE连接
 const progressSSE = useProgressSSE(
   `${import.meta.env.VITE_API_BASE_URL}system/progress/batchrename`,
   handleProgressMessage,
@@ -663,8 +679,8 @@ function stopLoadingProgress() {
   progressSSE.stop()
 }
 
-onMounted(() => {
-  list_files()
+useKeepAliveRefresh(list_files, {
+  active: computed(() => inProps.active),
 })
 
 onUnmounted(() => {

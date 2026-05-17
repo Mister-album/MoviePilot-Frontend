@@ -40,6 +40,13 @@ const filterParams = reactive({
 // 当前Key（用于重新加载数据）
 const currentKey = ref(0)
 
+function resetData() {
+  dataList.value = []
+  page.value = 1
+  isRefreshed.value = false
+  currentKey.value++
+}
+
 // TMDB电影风格字典
 const tmdbMovieGenreDict: Record<string, string> = {
   '28': t('tmdb.genreType.action'),
@@ -94,11 +101,7 @@ watch(
   () => props.keyword,
   newKeyword => {
     keyword.value = newKeyword || ''
-    // 重置页码和数据
-    page.value = 1
-    dataList.value = []
-    isRefreshed.value = false
-    currentKey.value++
+    resetData()
   },
 )
 
@@ -106,11 +109,7 @@ watch(
 watch(
   filterParams,
   () => {
-    // 重置数据
-    dataList.value = []
-    page.value = 1
-    isRefreshed.value = false
-    currentKey.value++
+    resetData()
   },
   { deep: true },
 )
@@ -184,6 +183,7 @@ async function fetchData({ done }: { done: any }) {
         page.value++
         // 返回加载成功
         done('ok')
+        await nextTick()
       }
     } else {
       // 设置加载中

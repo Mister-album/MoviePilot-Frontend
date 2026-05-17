@@ -110,6 +110,7 @@ async function fetchData({ done }: { done: any }) {
         page.value++
         // 返回加载成功
         done('ok')
+        await nextTick()
       }
     } else {
       // 设置加载中
@@ -145,9 +146,8 @@ function removeData(id: string) {
   dataList.value = dataList.value.filter(item => item.id !== id)
 }
 
-onActivated(() => {
+onMounted(() => {
   loadEventTypes()
-  fetchData({ done: () => {} })
 })
 </script>
 

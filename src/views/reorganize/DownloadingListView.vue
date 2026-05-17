@@ -7,15 +7,17 @@ import DownloadingCard from '@/components/cards/DownloadingCard.vue'
 import ProgressiveCardGrid from '@/components/misc/ProgressiveCardGrid.vue'
 import { useUserStore } from '@/stores'
 import { useI18n } from 'vue-i18n'
-import { useBackgroundOptimization } from '@/composables/useBackgroundOptimization'
+import { useBackground } from '@/composables/useBackground'
+import { useKeepAliveRefresh, type KeepAliveRefreshContext } from '@/composables/useKeepAliveRefresh'
 
 // 国际化
 const { t } = useI18n()
-const { useDataRefresh } = useBackgroundOptimization()
+const { useDataRefresh } = useBackground()
 
 // 定义输入参数
 const props = defineProps<{
   name: string
+  active?: boolean
 }>()
 
 // 用户 Store
@@ -28,7 +30,7 @@ const dataList = ref<DownloadingInfo[]>([])
 const isRefreshed = ref(false)
 
 // 获取订阅列表数据
-async function fetchData() {
+async function fetchData(_context: KeepAliveRefreshContext = {}) {
   try {
     dataList.value = await api.get('download/', { params: { name: props.name } })
     isRefreshed.value = true
@@ -43,8 +45,9 @@ const loading = ref(false)
 // 下拉刷新
 function onRefresh() {
   loading.value = true
-  fetchData()
-  loading.value = false
+  void fetchData().finally(() => {
+    loading.value = false
+  })
 }
 
 // 过滤数据，管理员用户显示全部，非管理员只显示自己的订阅
@@ -56,13 +59,19 @@ const filteredDataList = computed(() => {
   else return dataList.value.filter(data => data.userid === userName || data.username === userName)
 })
 
-// 使用优化的数据刷新定时器
+// 使用数据刷新定时器
 const { loading: dataLoading } = useDataRefresh(
   'downloading-list',
   fetchData,
   3000, // 3秒间隔
-  true // 立即执行
+  false // 初始加载交给 keep-alive 页面自身，避免同时发起两次请求
 )
+
+onMounted(fetchData)
+
+useKeepAliveRefresh(fetchData, {
+  active: computed(() => props.active !== false),
+})
 </script>
 
 <template>

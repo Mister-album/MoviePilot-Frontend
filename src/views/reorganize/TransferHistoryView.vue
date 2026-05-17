@@ -14,7 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { usePWA } from '@/composables/usePWA'
 import { useDynamicButton } from '@/composables/useDynamicButton'
 import { useAvailableHeight } from '@/composables/useAvailableHeight'
-import { useBackgroundOptimization } from '@/composables/useBackgroundOptimization'
+import { useBackground } from '@/composables/useBackground'
 import { useGlobalSettingsStore } from '@/stores'
 
 // i18n
@@ -27,7 +27,7 @@ const globalSettingsStore = useGlobalSettingsStore()
 const display = useDisplay()
 // PWA模式检测
 const { appMode } = usePWA()
-const { useProgressSSE } = useBackgroundOptimization()
+const { useProgressSSE } = useBackground()
 
 // 计算列表可用高度
 // componentOffset = VCardItem搜索栏(68) + VDivider(1) + 分页栏(40) + VCard边距(2) = 111
@@ -306,9 +306,11 @@ watch(
   }, 1000),
 )
 
-// 获取订阅列表数据
-async function fetchData(page = currentPage.value, count = itemsPerPage.value) {
-  loading.value = true
+// 获取历史记录数据，keep-alive 重新进入时可静默刷新，避免表格出现重新加载感。
+async function fetchData(page = currentPage.value, count = itemsPerPage.value, options: { silent?: boolean } = {}) {
+  if (!options.silent) {
+    loading.value = true
+  }
 
   try {
     const result: { [key: string]: any } = await api.get('history/transfer', {
@@ -326,8 +328,11 @@ async function fetchData(page = currentPage.value, count = itemsPerPage.value) {
     )
   } catch (error) {
     console.error(error)
+  } finally {
+    if (!options.silent) {
+      loading.value = false
+    }
   }
-  loading.value = false
 }
 
 // 根据 type 返回不同的图标
@@ -761,7 +766,7 @@ onActivated(() => {
   }
 
   if (!loading.value) {
-    fetchData()
+    fetchData(currentPage.value, itemsPerPage.value, { silent: true })
   }
 })
 

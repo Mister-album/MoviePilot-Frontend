@@ -984,6 +984,8 @@ export default {
     ranking: 'Ranking',
     noStatisticsData: 'No share statistics data available',
     bestVersion: 'Version Upgrading',
+    bestVersionEpisodeShort: 'Episode',
+    bestVersionWholeShort: 'Full',
     completed: 'Completed',
     subscribing: 'Subscribing',
     notStarted: 'Not Started',
@@ -1029,7 +1031,7 @@ export default {
     doubanGlobalTVRankings: 'Douban Global TV Rankings',
     noCategoryContent: 'No content to display in current category',
     configureContent: 'Configure Display Content',
-    customizeContent: 'Customize Content',
+    customizeContent: 'Customize Recommendations',
     selectContentToDisplay: 'Select content you want to display on the page',
     selectAll: 'Select All',
     selectNone: 'Select None',
@@ -1422,8 +1424,7 @@ export default {
       llmSupportAudioInputHint:
         'When enabled, incoming audio messages are transcribed before being handled by the AI assistant.',
       llmSupportAudioOutput: 'Support Audio Output',
-      llmSupportAudioOutputHint:
-        'When enabled, the AI assistant can send voice replies on supported channels.',
+      llmSupportAudioOutputHint: 'When enabled, the AI assistant can send voice replies on supported channels.',
       llmMaxContextTokens: 'LLM Max Context Tokens (K)',
       llmMaxContextTokensHint:
         'Set the maximum number of context tokens (in thousands) for the LLM. Exceeding this limit will trigger context trimming.',
@@ -1747,7 +1748,7 @@ export default {
       userAgent: 'Browser User-Agent',
       userAgentHint: 'User-Agent of the browser with CookieCloud plugin',
       browserEmulation: 'Browser Emulation',
-      browserEmulationHint: 'Choose how to emulate browser when accessing sites (Playwright or FlareSolverr)',
+      browserEmulationHint: 'Choose how to emulate browser when accessing sites (CloakBrowser or FlareSolverr)',
       flaresolverrUrl: 'FlareSolverr URL',
       flaresolverrUrlHint: 'Required when using FlareSolverr, e.g. http://127.0.0.1:8191',
       siteDataRefresh: 'Site Data Refresh',
@@ -2957,7 +2958,7 @@ export default {
   },
   transferHistory: {
     title: 'Transfer History',
-    searchPlaceholder: 'Search transfer records',
+    searchPlaceholder: 'Search (supports * ? wildcards)',
     titleColumn: 'Title',
     pathColumn: 'Path',
     modeColumn: 'Mode',
@@ -3065,7 +3066,8 @@ export default {
     apiKey: 'API Key',
     username: 'Username',
     password: 'Password',
-    qbittorrentApiKeyHint: 'For qBittorrent 5.2+, you can use the WebUI API Key directly. When set, API Key auth is preferred.',
+    qbittorrentApiKeyHint:
+      'For qBittorrent 5.2+, you can use the WebUI API Key directly. When set, API Key auth is preferred.',
     category: 'Auto Category Management',
     sequentail: 'Sequential Download',
     force_resume: 'Force Resume',

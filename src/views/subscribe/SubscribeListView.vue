@@ -10,6 +10,7 @@ import { useUserStore } from '@/stores'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'vue-toastification'
 import { useConfirm } from '@/composables/useConfirm'
+import { useKeepAliveRefresh, type KeepAliveRefreshContext } from '@/composables/useKeepAliveRefresh'
 
 // 国际化
 const { t } = useI18n()
@@ -36,6 +37,10 @@ const props = defineProps({
   sortMode: {
     type: Boolean,
     default: false,
+  },
+  active: {
+    type: Boolean,
+    default: true,
   },
 })
 
@@ -200,15 +205,21 @@ async function saveSubscribeOrder() {
 }
 
 // 获取订阅列表数据
-async function fetchData() {
+async function fetchData(context: KeepAliveRefreshContext = {}) {
+  const showLoading = !context.silent || !isRefreshed.value
+
   try {
-    loading.value = true
+    if (showLoading) {
+      loading.value = true
+    }
     dataList.value = await api.get('subscribe/')
     isRefreshed.value = true
   } catch (error) {
     console.error(error)
   } finally {
-    loading.value = false
+    if (showLoading) {
+      loading.value = false
+    }
   }
 }
 
@@ -413,10 +424,8 @@ onUnmounted(() => {
   window.removeEventListener('toggle-batch-mode', toggleBatchMode)
 })
 
-onActivated(async () => {
-  if (!loading.value) {
-    fetchData()
-  }
+useKeepAliveRefresh(fetchData, {
+  active: computed(() => props.active),
 })
 
 defineExpose({
