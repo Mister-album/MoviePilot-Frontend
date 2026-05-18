@@ -1,7 +1,6 @@
 <script lang="ts" setup>
 import { useToast } from 'vue-toastification'
 import api from '@/api'
-import ProgressDialog from '@/components/dialog/ProgressDialog.vue'
 import { useI18n } from 'vue-i18n'
 import { useSilentSettingRefresh } from '@/composables/useSilentSettingRefresh'
 
@@ -17,9 +16,6 @@ const props = defineProps({
 
 // 提示框
 const $toast = useToast()
-
-// 进度框
-const progressDialog = ref(false)
 
 // 站点重置
 const isConfirmResetSites = ref(false)
@@ -45,6 +41,7 @@ const siteSetting = ref<any>({
   Site: {
     SITEDATA_REFRESH_INTERVAL: 0,
     SITE_MESSAGE: false,
+    SEARCH_RESOURCE_PAGES: 1,
     BROWSER_EMULATION: 'cloakbrowser',
     FLARESOLVERR_URL: '',
   },
@@ -242,6 +239,19 @@ useSilentSettingRefresh(loadSiteSettings, {
               </VCol>
 
               <VCol cols="12" md="6">
+                <VTextField
+                  v-model.number="siteSetting.Site.SEARCH_RESOURCE_PAGES"
+                  type="number"
+                  min="1"
+                  step="1"
+                  :label="t('setting.site.searchResourcePages')"
+                  :hint="t('setting.site.searchResourcePagesHint')"
+                  persistent-hint
+                  prepend-inner-icon="mdi-file-search"
+                />
+              </VCol>
+
+              <VCol cols="12" md="6">
                 <VSelect
                   v-model="siteSetting.Site.BROWSER_EMULATION"
                   :items="BrowserEmulationItems"
@@ -307,10 +317,4 @@ useSilentSettingRefresh(loadSiteSettings, {
     </VCol>
   </VRow>
   <!-- 进度框 -->
-  <ProgressDialog
-    v-if="progressDialog"
-    v-model="progressDialog"
-    :text="t('setting.system.reloading')"
-    :indeterminate="true"
-  />
 </template>
