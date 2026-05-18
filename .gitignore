@@ -35,3 +35,7 @@ package-lock.json
 # iconify dist files
 src/@iconify/*.js
 public/plugin_icon/**
+
+.trae/
+.gitignore
+docs-lock/
